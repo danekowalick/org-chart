@@ -124,12 +124,83 @@ const makeGetTeamColor = (palette) => (team) => palette[team] || { bg: '#888', t
 const getInitials = (name) => name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
 
 export default function OrgChartApp() {
-  // Storage: load on first render, save on changes after load completes.
-  // We bundle employees + teamPalette into a single key to keep saves atomic.
-  const STORAGE_KEY = 'org-data-v1';
+  // Backend persistence: GET on mount, PUT (debounced) on changes.
+  // Auth, hosting, and the /api/* routes are handled by Azure Static Web Apps.
   const [employees, setEmployees] = useState(buildSeed);
   const [teamPalette, setTeamPalette] = useState({ ...baseTeamColors });
   const [storageLoaded, setStorageLoaded] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved' | 'error'
+  const [currentUser, setCurrentUser] = useState(null);
+
+  // Load current user (from Static Web Apps auth) and seed data from API
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      // 1) Who's logged in (Static Web Apps exposes this at /.auth/me)
+      try {
+        const meRes = await fetch('/.auth/me');
+        if (meRes.ok) {
+          const me = await meRes.json();
+          if (!cancelled && me.clientPrincipal) setCurrentUser(me.clientPrincipal);
+        }
+      } catch (e) { /* unauthenticated dev mode is fine */ }
+
+      // 2) Load employees + teams in parallel
+      try {
+        const [empRes, teamRes] = await Promise.all([
+          fetch('/api/employees'),
+          fetch('/api/teams'),
+        ]);
+        if (cancelled) return;
+        if (empRes.ok) {
+          const data = await empRes.json();
+          if (Array.isArray(data) && data.length > 0) setEmployees(data);
+        }
+        if (teamRes.ok) {
+          const data = await teamRes.json();
+          if (data && typeof data === 'object' && Object.keys(data).length > 0) setTeamPalette(data);
+        }
+      } catch (e) {
+        console.warn('Failed to load from API, using seed:', e);
+      } finally {
+        if (!cancelled) setStorageLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Debounced save: PUT employees + teams whenever they change.
+  // Saves run in parallel; status indicator gives the user confidence.
+  useEffect(() => {
+    if (!storageLoaded) return;
+    const timer = setTimeout(async () => {
+      setSaveStatus('saving');
+      try {
+        const [empRes, teamRes] = await Promise.all([
+          fetch('/api/employees', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(employees),
+          }),
+          fetch('/api/teams', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(teamPalette),
+          }),
+        ]);
+        if (empRes.ok && teamRes.ok) {
+          setSaveStatus('saved');
+          setTimeout(() => setSaveStatus(s => s === 'saved' ? 'idle' : s), 1800);
+        } else {
+          setSaveStatus('error');
+        }
+      } catch (e) {
+        console.warn('Save failed:', e);
+        setSaveStatus('error');
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [employees, teamPalette, storageLoaded]);
   const [view, setView] = useState('tree');
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState(null);
@@ -173,51 +244,6 @@ export default function OrgChartApp() {
       document.removeEventListener('fullscreenchange', onFsChange);
     };
   }, [displayMode]);
-
-  // Load from storage once on mount
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        if (typeof window === 'undefined' || !window.storage) {
-          setStorageLoaded(true);
-          return;
-        }
-        const result = await window.storage.get(STORAGE_KEY);
-        if (!cancelled && result && result.value) {
-          try {
-            const parsed = typeof result.value === 'string' ? JSON.parse(result.value) : result.value;
-            if (parsed.employees) setEmployees(parsed.employees);
-            if (parsed.teamPalette) setTeamPalette(parsed.teamPalette);
-          } catch (e) {
-            // Corrupt data: fall back to seed and overwrite on next save
-            console.warn('Failed to parse stored org data, using seed:', e);
-          }
-        }
-      } catch (e) {
-        // No data stored yet — first time loading
-      } finally {
-        if (!cancelled) setStorageLoaded(true);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  // Save to storage when data changes (debounced so rapid edits coalesce).
-  // Only saves after the initial load completes, otherwise we'd overwrite
-  // stored data with the seed defaults on mount.
-  useEffect(() => {
-    if (!storageLoaded) return;
-    if (typeof window === 'undefined' || !window.storage) return;
-    const timer = setTimeout(async () => {
-      try {
-        await window.storage.set(STORAGE_KEY, JSON.stringify({ employees, teamPalette }));
-      } catch (e) {
-        console.warn('Failed to save org data:', e);
-      }
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [employees, teamPalette, storageLoaded]);
 
   const getTeamColor = useMemo(() => makeGetTeamColor(teamPalette), [teamPalette]);
 
@@ -410,6 +436,7 @@ export default function OrgChartApp() {
         }
         .search-match-pulse { animation: searchMatchPulse 1.8s ease-in-out infinite; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         .fade-in { animation: fadeIn 0.3s ease-out; }
       `}</style>
 
@@ -425,10 +452,37 @@ export default function OrgChartApp() {
                 <p style={{ margin: 0, fontSize: 11, color: '#888', letterSpacing: '0.08em', textTransform: 'uppercase' }}>People Directory</p>
               </div>
             </div>
-            <button onClick={() => { setEditing(null); setShowForm(true); }} className="btn-primary"
-              style={{ background: '#1a1a1a', color: '#fafaf7', border: 'none', padding: '10px 18px', borderRadius: 6, fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Plus size={15} /> Add employee
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              {/* Save status indicator */}
+              <span style={{
+                fontSize: 11, color: saveStatus === 'error' ? '#a04040' : '#888',
+                letterSpacing: '0.04em',
+                display: 'flex', alignItems: 'center', gap: 5,
+                opacity: saveStatus === 'idle' ? 0 : 1,
+                transition: 'opacity 0.3s',
+                minWidth: 60,
+              }}>
+                <span style={{
+                  width: 6, height: 6, borderRadius: '50%',
+                  background: saveStatus === 'saving' ? '#d4a017'
+                    : saveStatus === 'saved' ? '#4a7a4a'
+                    : saveStatus === 'error' ? '#a04040' : 'transparent',
+                  animation: saveStatus === 'saving' ? 'pulse 1s ease-in-out infinite' : 'none',
+                }} />
+                {saveStatus === 'saving' ? 'Saving…'
+                  : saveStatus === 'saved' ? 'Saved'
+                  : saveStatus === 'error' ? 'Save failed' : ''}
+              </span>
+              {currentUser && (
+                <span style={{ fontSize: 12, color: '#666' }}>
+                  {currentUser.userDetails}
+                </span>
+              )}
+              <button onClick={() => { setEditing(null); setShowForm(true); }} className="btn-primary"
+                style={{ background: '#1a1a1a', color: '#fafaf7', border: 'none', padding: '10px 18px', borderRadius: 6, fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Plus size={15} /> Add employee
+              </button>
+            </div>
           </div>
         </header>
       )}
