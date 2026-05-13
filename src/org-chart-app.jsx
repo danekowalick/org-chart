@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Users, Network, Plus, Pencil, Trash2, X, Search, Building2, Upload, Image as ImageIcon, MapPin, Filter } from 'lucide-react';
+import { Users, Network, Plus, Pencil, Trash2, X, Search, Building2, Upload, Image as ImageIcon, MapPin, Filter, Maximize2, Minimize2 } from 'lucide-react';
 
 // --- Seed data from uploaded CSV ---
 // Normalized: "Josh Franck" -> "Joshua Franck"; "NA" manager -> null; "NA" team -> "Unassigned"
@@ -124,8 +124,12 @@ const makeGetTeamColor = (palette) => (team) => palette[team] || { bg: '#888', t
 const getInitials = (name) => name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
 
 export default function OrgChartApp() {
+  // Storage: load on first render, save on changes after load completes.
+  // We bundle employees + teamPalette into a single key to keep saves atomic.
+  const STORAGE_KEY = 'org-data-v1';
   const [employees, setEmployees] = useState(buildSeed);
   const [teamPalette, setTeamPalette] = useState({ ...baseTeamColors });
+  const [storageLoaded, setStorageLoaded] = useState(false);
   const [view, setView] = useState('tree');
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState(null);
@@ -134,6 +138,86 @@ export default function OrgChartApp() {
   const [draggedId, setDraggedId] = useState(null);
   const [dragOverId, setDragOverId] = useState(null);
   const [toast, setToast] = useState(null);
+  // Display mode: chart-only, fullscreen-style presentation view
+  const [displayMode, setDisplayMode] = useState(false);
+  const appRootRef = useRef(null);
+
+  // Toggle browser fullscreen and the in-app chrome-hiding mode together.
+  // Fullscreen API is best-effort: if it's blocked, we still hide chrome.
+  const enterDisplayMode = async () => {
+    setDisplayMode(true);
+    if (appRootRef.current && typeof appRootRef.current.requestFullscreen === 'function') {
+      try { await appRootRef.current.requestFullscreen(); } catch (e) { /* ignore */ }
+    }
+  };
+  const exitDisplayMode = async () => {
+    setDisplayMode(false);
+    if (typeof document !== 'undefined' && document.fullscreenElement) {
+      try { await document.exitFullscreen(); } catch (e) { /* ignore */ }
+    }
+  };
+
+  // ESC exits display mode (browsers also exit native fullscreen on ESC,
+  // but if the user is in our chrome-hidden fallback without native fs,
+  // we still need to listen). Also sync state when native fs exits.
+  useEffect(() => {
+    if (!displayMode) return;
+    const onKey = (e) => { if (e.key === 'Escape') exitDisplayMode(); };
+    const onFsChange = () => {
+      if (!document.fullscreenElement) setDisplayMode(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('fullscreenchange', onFsChange);
+    };
+  }, [displayMode]);
+
+  // Load from storage once on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (typeof window === 'undefined' || !window.storage) {
+          setStorageLoaded(true);
+          return;
+        }
+        const result = await window.storage.get(STORAGE_KEY);
+        if (!cancelled && result && result.value) {
+          try {
+            const parsed = typeof result.value === 'string' ? JSON.parse(result.value) : result.value;
+            if (parsed.employees) setEmployees(parsed.employees);
+            if (parsed.teamPalette) setTeamPalette(parsed.teamPalette);
+          } catch (e) {
+            // Corrupt data: fall back to seed and overwrite on next save
+            console.warn('Failed to parse stored org data, using seed:', e);
+          }
+        }
+      } catch (e) {
+        // No data stored yet — first time loading
+      } finally {
+        if (!cancelled) setStorageLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Save to storage when data changes (debounced so rapid edits coalesce).
+  // Only saves after the initial load completes, otherwise we'd overwrite
+  // stored data with the seed defaults on mount.
+  useEffect(() => {
+    if (!storageLoaded) return;
+    if (typeof window === 'undefined' || !window.storage) return;
+    const timer = setTimeout(async () => {
+      try {
+        await window.storage.set(STORAGE_KEY, JSON.stringify({ employees, teamPalette }));
+      } catch (e) {
+        console.warn('Failed to save org data:', e);
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [employees, teamPalette, storageLoaded]);
 
   const getTeamColor = useMemo(() => makeGetTeamColor(teamPalette), [teamPalette]);
 
@@ -143,7 +227,6 @@ export default function OrgChartApp() {
     if (!teamName || teamPalette[teamName]) return;
     setTeamPalette(prev => {
       if (prev[teamName]) return prev;
-      // Pick a color that isn't already in use in the palette
       const used = new Set(Object.values(prev).map(c => c.bg));
       const next = extraTeamColors.find(c => !used.has(c.bg))
         || extraTeamColors[Object.keys(prev).length % extraTeamColors.length];
@@ -302,7 +385,7 @@ export default function OrgChartApp() {
   const clearFilters = () => setActiveTeams(new Set());
 
   return (
-    <div style={{ minHeight: '100vh', background: '#fafaf7', fontFamily: "'Inter', system-ui, sans-serif", color: '#1a1a1a' }}>
+    <div ref={appRootRef} style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#fafaf7', fontFamily: "'Inter', system-ui, sans-serif", color: '#1a1a1a', overflow: 'hidden' }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600&display=swap');
         * { box-sizing: border-box; }
@@ -330,26 +413,30 @@ export default function OrgChartApp() {
         .fade-in { animation: fadeIn 0.3s ease-out; }
       `}</style>
 
-      <header style={{ borderBottom: '1px solid #e5e4dc', background: '#fafaf7', position: 'sticky', top: 0, zIndex: 10 }}>
-        <div style={{ maxWidth: 1400, margin: '0 auto', padding: '24px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ width: 36, height: 36, background: '#1a1a1a', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Building2 size={18} color="#fafaf7" />
+      {!displayMode && (
+        <header style={{ borderBottom: '1px solid #e5e4dc', background: '#fafaf7', flexShrink: 0 }}>
+          <div style={{ padding: '20px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 36, height: 36, background: '#1a1a1a', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Building2 size={18} color="#fafaf7" />
+              </div>
+              <div>
+                <h1 className="display-font" style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Atlas</h1>
+                <p style={{ margin: 0, fontSize: 11, color: '#888', letterSpacing: '0.08em', textTransform: 'uppercase' }}>People Directory</p>
+              </div>
             </div>
-            <div>
-              <h1 className="display-font" style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Atlas</h1>
-              <p style={{ margin: 0, fontSize: 11, color: '#888', letterSpacing: '0.08em', textTransform: 'uppercase' }}>People Directory</p>
-            </div>
+            <button onClick={() => { setEditing(null); setShowForm(true); }} className="btn-primary"
+              style={{ background: '#1a1a1a', color: '#fafaf7', border: 'none', padding: '10px 18px', borderRadius: 6, fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Plus size={15} /> Add employee
+            </button>
           </div>
-          <button onClick={() => { setEditing(null); setShowForm(true); }} className="btn-primary"
-            style={{ background: '#1a1a1a', color: '#fafaf7', border: 'none', padding: '10px 18px', borderRadius: 6, fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Plus size={15} /> Add employee
-          </button>
-        </div>
-      </header>
+        </header>
+      )}
 
-      <main style={{ maxWidth: 1400, margin: '0 auto', padding: '32px' }}>
-        <div style={{ marginBottom: 28 }}>
+      <main style={{ flex: 1, minHeight: 0, padding: displayMode ? 0 : '24px 32px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {!displayMode && (
+        <>
+        <div style={{ marginBottom: 20, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#888', fontWeight: 600 }}>
               <Filter size={12} /> Filter by team
@@ -400,26 +487,39 @@ export default function OrgChartApp() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, gap: 16, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', background: '#fff', border: '1px solid #e5e4dc', borderRadius: 8, padding: 3 }}>
-            <button onClick={() => setView('table')}
-              style={{
-                background: view === 'table' ? '#1a1a1a' : 'transparent',
-                color: view === 'table' ? '#fafaf7' : '#555',
-                border: 'none', padding: '8px 14px', borderRadius: 6, fontSize: 13, fontWeight: 500,
-                display: 'flex', alignItems: 'center', gap: 6
-              }}>
-              <Users size={14} /> Table
-            </button>
-            <button onClick={() => setView('tree')}
-              style={{
-                background: view === 'tree' ? '#1a1a1a' : 'transparent',
-                color: view === 'tree' ? '#fafaf7' : '#555',
-                border: 'none', padding: '8px 14px', borderRadius: 6, fontSize: 13, fontWeight: 500,
-                display: 'flex', alignItems: 'center', gap: 6
-              }}>
-              <Network size={14} /> Org tree
-            </button>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 16, flexWrap: 'wrap', flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', background: '#fff', border: '1px solid #e5e4dc', borderRadius: 8, padding: 3 }}>
+              <button onClick={() => setView('table')}
+                style={{
+                  background: view === 'table' ? '#1a1a1a' : 'transparent',
+                  color: view === 'table' ? '#fafaf7' : '#555',
+                  border: 'none', padding: '8px 14px', borderRadius: 6, fontSize: 13, fontWeight: 500,
+                  display: 'flex', alignItems: 'center', gap: 6
+                }}>
+                <Users size={14} /> Table
+              </button>
+              <button onClick={() => setView('tree')}
+                style={{
+                  background: view === 'tree' ? '#1a1a1a' : 'transparent',
+                  color: view === 'tree' ? '#fafaf7' : '#555',
+                  border: 'none', padding: '8px 14px', borderRadius: 6, fontSize: 13, fontWeight: 500,
+                  display: 'flex', alignItems: 'center', gap: 6
+                }}>
+                <Network size={14} /> Org tree
+              </button>
+            </div>
+            {view === 'tree' && (
+              <button onClick={enterDisplayMode} className="btn-ghost"
+                style={{
+                  background: '#fff', color: '#1a1a1a', border: '1px solid #e5e4dc',
+                  padding: '8px 14px', borderRadius: 8, fontSize: 13, fontWeight: 500,
+                  display: 'flex', alignItems: 'center', gap: 6
+                }}
+                title="Display mode (chart fills the screen). Press Esc to exit.">
+                <Maximize2 size={14} /> Display
+              </button>
+            )}
           </div>
 
           <div style={{ position: 'relative', flex: '1 1 280px', maxWidth: 360 }}>
@@ -442,6 +542,8 @@ export default function OrgChartApp() {
             )}
           </div>
         </div>
+        </>
+        )}
 
         {view === 'table' ? (
           <TableView
@@ -462,6 +564,8 @@ export default function OrgChartApp() {
             onEdit={(emp) => { setEditing(emp); setShowForm(true); }}
             searchMatchIds={searchMatchIds}
             getTeamColor={getTeamColor}
+            displayMode={displayMode}
+            onExitDisplayMode={exitDisplayMode}
           />
         )}
       </main>
@@ -484,6 +588,7 @@ export default function OrgChartApp() {
           employees={employees}
           teamPalette={teamPalette}
           getTeamColor={getTeamColor}
+          onAddTeam={ensureTeamColor}
           onSave={handleSave}
           onDelete={editing ? handleDelete : null}
           onClose={() => { setEditing(null); setShowForm(false); }}
@@ -496,11 +601,11 @@ export default function OrgChartApp() {
 // --- Table view ---
 function TableView({ employees, allEmployees, onEdit, getTeamColor }) {
   return (
-    <div className="fade-in" style={{ background: '#fff', border: '1px solid #e5e4dc', borderRadius: 10, overflow: 'hidden' }}>
-      <div style={{ overflowX: 'auto' }}>
+    <div className="fade-in" style={{ background: '#fff', border: '1px solid #e5e4dc', borderRadius: 10, overflow: 'hidden', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ overflow: 'auto', flex: 1, minHeight: 0 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
-            <tr style={{ background: '#f5f4ec', borderBottom: '1px solid #e5e4dc' }}>
+            <tr style={{ background: '#f5f4ec', borderBottom: '1px solid #e5e4dc', position: 'sticky', top: 0, zIndex: 1 }}>
               {['Name', 'Title', 'Team', 'Location', 'Manager', ''].map((h, i) => (
                 <th key={i} style={{ textAlign: 'left', padding: '14px 20px', fontWeight: 600, fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#666' }}>{h}</th>
               ))}
@@ -553,7 +658,7 @@ function TableView({ employees, allEmployees, onEdit, getTeamColor }) {
 }
 
 // --- Tree view ---
-function TreeView({ tree, draggedId, dragOverId, setDraggedId, setDragOverId, onReparent, getDescendantIds, onEdit, searchMatchIds, getTeamColor }) {
+function TreeView({ tree, draggedId, dragOverId, setDraggedId, setDragOverId, onReparent, getDescendantIds, onEdit, searchMatchIds, getTeamColor, displayMode, onExitDisplayMode }) {
   // slotTarget = { parentId, kind: 'branch' | 'leaf', index } — where ghost shows up
   const [slotTarget, setSlotTarget] = useState(null);
 
@@ -664,6 +769,7 @@ function TreeView({ tree, draggedId, dragOverId, setDraggedId, setDragOverId, on
     slotTarget, setSlotTarget,
     searchMatchIds, registerCardRef,
     getTeamColor,
+    displayMode,
   };
 
   return (
@@ -685,18 +791,44 @@ function TreeView({ tree, draggedId, dragOverId, setDraggedId, setDragOverId, on
       }}
       onDrop={stopAutoPan}
       style={{
-        background: '#fff', border: '1px solid #e5e4dc', borderRadius: 10, padding: 32,
+        background: '#fff',
+        border: displayMode ? 'none' : '1px solid #e5e4dc',
+        borderRadius: displayMode ? 0 : 10,
+        padding: displayMode ? '48px 32px' : 32,
         overflow: 'auto',
-        // Hint at right-click pan affordance when hovering; switch to grabbing while active
+        flex: 1,
+        minHeight: 0,
         cursor: isPanning ? 'grabbing' : 'auto',
-        // Prevent text selection during right-drag pan
         userSelect: isPanning ? 'none' : 'auto',
-        maxHeight: 'calc(100vh - 320px)', // give the tree a viewport so panning has somewhere to go
+        position: 'relative',
       }}
-    >      {tree.length === 0 ? (
+    >
+      {/* Floating Exit button in display mode */}
+      {displayMode && (
+        <button
+          onClick={onExitDisplayMode}
+          title="Exit display mode (Esc)"
+          style={{
+            position: 'fixed', top: 20, right: 24, zIndex: 50,
+            background: 'rgba(26, 26, 26, 0.88)', color: '#fafaf7',
+            border: 'none', padding: '9px 14px', borderRadius: 8,
+            fontSize: 12, fontWeight: 500, letterSpacing: '0.02em',
+            display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+            backdropFilter: 'blur(8px)',
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(26, 26, 26, 1)'}
+          onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(26, 26, 26, 0.88)'}
+        >
+          <Minimize2 size={13} /> Exit · Esc
+        </button>
+      )}
+
+      {tree.length === 0 ? (
         <div style={{ padding: 48, textAlign: 'center', color: '#888' }}>No employees to display</div>
       ) : (
         <>
+          {!displayMode && (
           <div
             className={`top-drop-zone ${dragOverId === '__root__' ? 'active' : ''}`}
             onDragOver={(e) => {
@@ -728,6 +860,7 @@ function TreeView({ tree, draggedId, dragOverId, setDraggedId, setDragOverId, on
               ? 'Drop here to promote to top level — drag near an edge to auto-scroll'
               : 'Drag to reparent · Right-click and drag to pan the canvas'}
           </div>
+          )}
 
           <div style={{ display: 'flex', justifyContent: 'center', minWidth: 'fit-content' }}>
             <div style={{ display: 'flex', gap: 32, alignItems: 'flex-start' }}>
@@ -1028,7 +1161,7 @@ function GhostCard() {
 }
 
 // --- Employee card ---
-function NodeCard({ node, draggedId, dragOverId, setDraggedId, setDragOverId, onReparent, getDescendantIds, onEdit, slotTarget, setSlotTarget, searchMatchIds, registerCardRef, getTeamColor }) {
+function NodeCard({ node, draggedId, dragOverId, setDraggedId, setDragOverId, onReparent, getDescendantIds, onEdit, slotTarget, setSlotTarget, searchMatchIds, registerCardRef, getTeamColor, displayMode }) {
   const c = getTeamColor(node.team);
   const isBeingDragged = draggedId === node.id;
   const isDropTarget = dragOverId === node.id && draggedId !== null && draggedId !== node.id;
@@ -1106,19 +1239,21 @@ function NodeCard({ node, draggedId, dragOverId, setDraggedId, setDragOverId, on
   return (
     <div
       ref={setRef}
-      draggable
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
+      draggable={!displayMode}
+      onDragStart={displayMode ? undefined : handleDragStart}
+      onDragEnd={displayMode ? undefined : handleDragEnd}
+      onDragOver={displayMode ? undefined : handleDragOver}
+      onDragLeave={displayMode ? undefined : handleDragLeave}
+      onDrop={displayMode ? undefined : handleDrop}
       className={`card-hover ${isSearchMatch ? 'search-match-pulse' : ''}`}
       style={{
         display: 'flex', alignItems: 'flex-start', gap: 10,
         background: bgColor, border: `1px solid ${borderColor}`, borderLeft: `3px solid ${c.bg}`,
         padding: '10px 12px', borderRadius: 8, width: 200,
         transition: 'opacity 0.2s, box-shadow 0.2s, background 0.2s, border-color 0.2s',
-        boxShadow, opacity, cursor: 'grab', userSelect: 'none', flexShrink: 0
+        boxShadow, opacity,
+        cursor: displayMode ? 'default' : 'grab',
+        userSelect: 'none', flexShrink: 0
       }}
     >
       {node.photo ? (
@@ -1142,18 +1277,20 @@ function NodeCard({ node, draggedId, dragOverId, setDraggedId, setDragOverId, on
           </div>
         )}
       </div>
-      <div onMouseDown={(e) => e.stopPropagation()}>
-        <button onClick={(e) => { e.stopPropagation(); onEdit(node); }} draggable={false} className="btn-ghost"
-          style={{ background: 'transparent', border: 'none', padding: 4, borderRadius: 3, color: '#888', display: 'flex' }}>
-          <Pencil size={12} />
-        </button>
-      </div>
+      {!displayMode && (
+        <div onMouseDown={(e) => e.stopPropagation()}>
+          <button onClick={(e) => { e.stopPropagation(); onEdit(node); }} draggable={false} className="btn-ghost"
+            style={{ background: 'transparent', border: 'none', padding: 4, borderRadius: 3, color: '#888', display: 'flex' }}>
+            <Pencil size={12} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 // --- Employee form ---
-function EmployeeForm({ employee, employees, onSave, onDelete, onClose, teamPalette, getTeamColor }) {
+function EmployeeForm({ employee, employees, onSave, onDelete, onClose, teamPalette, getTeamColor, onAddTeam }) {
   const [form, setForm] = useState(employee || {
     name: '', title: '', team: 'Engineering', location: '', managerId: null, photo: null
   });
@@ -1164,6 +1301,11 @@ function EmployeeForm({ employee, employees, onSave, onDelete, onClose, teamPale
   const [newTeamName, setNewTeamName] = useState('');
   // Two-step delete confirmation
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Manager combobox state
+  const [managerQuery, setManagerQuery] = useState('');
+  const [managerOpen, setManagerOpen] = useState(false);
+  const managerInputRef = useRef(null);
+  const managerWrapRef = useRef(null);
 
   const knownTeams = useMemo(() => {
     const set = new Set(Object.keys(teamPalette));
@@ -1172,7 +1314,43 @@ function EmployeeForm({ employee, employees, onSave, onDelete, onClose, teamPale
   }, [employees, teamPalette]);
 
   const possibleManagers = employees.filter(e => !employee || e.id !== employee.id);
+  const currentManager = possibleManagers.find(m => m.id === Number(form.managerId));
+
+  // Filtered manager list by query (name, title, or team match)
+  const filteredManagers = useMemo(() => {
+    const q = managerQuery.toLowerCase().trim();
+    if (!q) return possibleManagers.slice(0, 50);
+    return possibleManagers.filter(m =>
+      m.name.toLowerCase().includes(q)
+      || m.title.toLowerCase().includes(q)
+      || m.team.toLowerCase().includes(q)
+    ).slice(0, 50);
+  }, [possibleManagers, managerQuery]);
+
+  // Close the manager dropdown when clicking outside
+  useEffect(() => {
+    if (!managerOpen) return;
+    const onClick = (e) => {
+      if (managerWrapRef.current && !managerWrapRef.current.contains(e.target)) {
+        setManagerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [managerOpen]);
+
   const c = getTeamColor(form.team);
+
+  // Commit a newly-created team: register it in the palette IMMEDIATELY (so the
+  // <select> below has the option to render), then set the form's team to it.
+  const commitNewTeam = () => {
+    const name = newTeamName.trim();
+    if (!name) return;
+    if (onAddTeam) onAddTeam(name);
+    setForm(prev => ({ ...prev, team: name }));
+    setAddingTeam(false);
+    setNewTeamName('');
+  };
 
   const handleSubmit = () => {
     if (!form.name.trim() || !form.title.trim()) return;
@@ -1269,12 +1447,7 @@ function EmployeeForm({ employee, employees, onSave, onDelete, onClose, teamPale
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      const name = newTeamName.trim();
-                      if (name) {
-                        setForm({ ...form, team: name });
-                        setAddingTeam(false);
-                        setNewTeamName('');
-                      }
+                      commitNewTeam();
                     } else if (e.key === 'Escape') {
                       setAddingTeam(false);
                       setNewTeamName('');
@@ -1285,14 +1458,7 @@ function EmployeeForm({ employee, employees, onSave, onDelete, onClose, teamPale
                   style={{ ...inputStyle, flex: 1 }}
                 />
                 <button
-                  onClick={() => {
-                    const name = newTeamName.trim();
-                    if (name) {
-                      setForm({ ...form, team: name });
-                      setAddingTeam(false);
-                      setNewTeamName('');
-                    }
-                  }}
+                  onClick={commitNewTeam}
                   disabled={!newTeamName.trim()}
                   style={{
                     background: newTeamName.trim() ? '#1a1a1a' : '#c8c7bf',
@@ -1313,18 +1479,21 @@ function EmployeeForm({ employee, employees, onSave, onDelete, onClose, teamPale
               </div>
             ) : (
               <select
-                value={form.team}
+                value={knownTeams.includes(form.team) ? form.team : ''}
                 onChange={(e) => {
                   if (e.target.value === '__new__') {
                     setAddingTeam(true);
                     setNewTeamName('');
-                  } else {
+                  } else if (e.target.value) {
                     setForm({ ...form, team: e.target.value });
                   }
                 }}
                 style={inputStyle}
               >
-                {knownTeams.map(t => <option key={t}>{t}</option>)}
+                {!knownTeams.includes(form.team) && form.team && (
+                  <option value="">— Select a team —</option>
+                )}
+                {knownTeams.map(t => <option key={t} value={t}>{t}</option>)}
                 <option disabled>──────────</option>
                 <option value="__new__">+ Create new team…</option>
               </select>
@@ -1334,10 +1503,22 @@ function EmployeeForm({ employee, employees, onSave, onDelete, onClose, teamPale
             <input type="text" value={form.location || ''} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="City, State or Country" style={inputStyle} />
           </Field>
           <Field label="Reports to">
-            <select value={form.managerId || ''} onChange={(e) => setForm({ ...form, managerId: e.target.value || null })} style={inputStyle}>
-              <option value="">— No manager —</option>
-              {possibleManagers.map(m => <option key={m.id} value={m.id}>{m.name} ({m.title})</option>)}
-            </select>
+            <ManagerCombobox
+              currentManager={currentManager}
+              filteredManagers={filteredManagers}
+              managerQuery={managerQuery}
+              setManagerQuery={setManagerQuery}
+              managerOpen={managerOpen}
+              setManagerOpen={setManagerOpen}
+              managerInputRef={managerInputRef}
+              managerWrapRef={managerWrapRef}
+              getTeamColor={getTeamColor}
+              onPick={(id) => {
+                setForm({ ...form, managerId: id });
+                setManagerOpen(false);
+                setManagerQuery('');
+              }}
+            />
           </Field>
         </div>
 
@@ -1385,6 +1566,112 @@ function EmployeeForm({ employee, employees, onSave, onDelete, onClose, teamPale
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// --- Searchable manager picker for the "Reports to" field ---
+function ManagerCombobox({
+  currentManager, filteredManagers, managerQuery, setManagerQuery,
+  managerOpen, setManagerOpen, managerInputRef, managerWrapRef,
+  getTeamColor, onPick
+}) {
+  // The visible text in the input: query while open, manager name while closed
+  const displayValue = managerOpen
+    ? managerQuery
+    : (currentManager ? currentManager.name : '');
+
+  return (
+    <div ref={managerWrapRef} style={{ position: 'relative' }}>
+      <div style={{ position: 'relative' }}>
+        <input
+          ref={managerInputRef}
+          type="text"
+          value={displayValue}
+          placeholder={currentManager ? '' : '— No manager —'}
+          onFocus={() => { setManagerOpen(true); setManagerQuery(''); }}
+          onChange={(e) => { setManagerQuery(e.target.value); if (!managerOpen) setManagerOpen(true); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') { setManagerOpen(false); e.target.blur(); }
+            if (e.key === 'ArrowDown' && !managerOpen) setManagerOpen(true);
+          }}
+          style={{ ...inputStyle, paddingRight: 64 }}
+        />
+        {/* Clear button when a manager is selected */}
+        {currentManager && !managerOpen && (
+          <button
+            onClick={() => { onPick(null); setManagerQuery(''); }}
+            title="Clear manager"
+            style={{
+              position: 'absolute', right: 32, top: '50%', transform: 'translateY(-50%)',
+              background: 'transparent', border: 'none', padding: 2, color: '#999',
+              display: 'flex', alignItems: 'center', cursor: 'pointer'
+            }}
+          >
+            <X size={13} />
+          </button>
+        )}
+        <Search size={13} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: '#888', pointerEvents: 'none' }} />
+      </div>
+
+      {managerOpen && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 50,
+          background: '#fff', border: '1px solid #e5e4dc', borderRadius: 8,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+          maxHeight: 260, overflowY: 'auto'
+        }}>
+          {/* "No manager" option at the top */}
+          <div
+            onClick={() => onPick(null)}
+            style={{
+              padding: '9px 12px', fontSize: 12, color: '#666',
+              cursor: 'pointer', borderBottom: '1px solid #f0efe8',
+              fontStyle: 'italic'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.background = '#f5f4ec'}
+            onMouseLeave={(e) => e.currentTarget.style.background = '#fff'}
+          >
+            — No manager —
+          </div>
+          {filteredManagers.length === 0 ? (
+            <div style={{ padding: '14px 12px', fontSize: 12, color: '#888', textAlign: 'center' }}>
+              No matches
+            </div>
+          ) : filteredManagers.map(m => {
+            const c = getTeamColor(m.team);
+            return (
+              <div
+                key={m.id}
+                onClick={() => onPick(m.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '8px 12px', cursor: 'pointer',
+                  borderBottom: '1px solid #f7f6ee'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = '#f5f4ec'}
+                onMouseLeave={(e) => e.currentTarget.style.background = '#fff'}
+              >
+                {m.photo ? (
+                  <img src={m.photo} alt={m.name} style={{ width: 26, height: 26, borderRadius: '50%', objectFit: 'cover', border: `2px solid ${c.bg}`, flexShrink: 0 }} />
+                ) : (
+                  <div style={{
+                    width: 26, height: 26, borderRadius: '50%', background: c.bg, color: c.text,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 10, fontWeight: 600, flexShrink: 0
+                  }}>
+                    {getInitials(m.name)}
+                  </div>
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#1a1a1a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.name}</div>
+                  <div style={{ fontSize: 10, color: '#666', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.title} · {m.team}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
