@@ -2,8 +2,9 @@
   "name": "atlas-api",
   "version": "1.0.0",
   "description": "Atlas org chart backend",
-  "main": "index.js",
+  "main": "src/index.js",
   "dependencies": {
-    "@azure/cosmos": "^3.17.3"
+    "@azure/cosmos": "^3.17.3",
+    "@azure/functions": "^4.5.0"
   }
 }
