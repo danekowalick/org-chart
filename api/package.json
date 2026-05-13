@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Atlas org chart backend",
   "main": "index.js",
+  "engines": {
+    "node": ">=20 <21"
+  },
   "scripts": {
     "start": "func start"
   },
