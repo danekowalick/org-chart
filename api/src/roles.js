@@ -17,7 +17,6 @@ const ADMIN_EMAILS = [
 app.http('roles', {
   methods: ['POST'],
   authLevel: 'anonymous',
-  route: 'roles',
   handler: async (request, context) => {
     try {
       const body = await request.json();
