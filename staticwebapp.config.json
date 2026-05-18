@@ -1,9 +1,26 @@
 {
   "$schema": "https://json.schemastore.org/staticwebapp.config.json",
   "auth": {
-    "rolesSource": "/api/roles"
+    "rolesSource": "/api/roles",
+    "identityProviders": {
+      "azureActiveDirectory": {
+        "registration": {
+          "openIdIssuer": "https://login.microsoftonline.com/9749ac01-3afe-4589-b6ef-abb121534586/v2.0",
+          "clientIdSettingName": "AAD_CLIENT_ID",
+          "clientSecretSettingName": "AAD_CLIENT_SECRET"
+        }
+      }
+    }
   },
   "routes": [
+    {
+      "route": "/login",
+      "redirect": "/.auth/login/aad"
+    },
+    {
+      "route": "/logout",
+      "redirect": "/.auth/logout"
+    },
     {
       "route": "/api/employees",
       "methods": ["PUT"],
@@ -13,14 +30,20 @@
       "route": "/api/teams",
       "methods": ["PUT"],
       "allowedRoles": ["admin"]
+    },
+    {
+      "route": "/*",
+      "allowedRoles": ["authenticated"]
     }
   ],
+  "responseOverrides": {
+    "401": {
+      "redirect": "/.auth/login/aad",
+      "statusCode": 302
+    }
+  },
   "navigationFallback": {
     "rewrite": "/index.html",
     "exclude": ["/images/*.{png,jpg,gif,svg}", "/css/*", "/api/*"]
-  },
-  "responseOverrides": {
-    "401": { "statusCode": 401 },
-    "403": { "statusCode": 403 }
   }
 }
