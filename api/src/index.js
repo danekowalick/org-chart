@@ -1,6 +1,5 @@
 const { app } = require('@azure/functions');
 const { CosmosClient } = require('@azure/cosmos');
-require('./roles');
 
 let _container = null;
 async function getContainer() {
@@ -20,32 +19,48 @@ async function getContainer() {
   return _container;
 }
 
-// Decode the SWA-provided user principal header. Returns null if missing.
 function getUser(request) {
   const header = request.headers.get('x-ms-client-principal');
   if (!header) return null;
   try {
     const decoded = Buffer.from(header, 'base64').toString('utf-8');
     return JSON.parse(decoded);
-  } catch (e) {
-    return null;
-  }
+  } catch (e) { return null; }
 }
 
 function isAdmin(user) {
   return user && Array.isArray(user.userRoles) && user.userRoles.includes('admin');
 }
 
-// GET /api/employees → public read
-// PUT /api/employees → admin only (also enforced in staticwebapp.config.json)
+const ADMIN_EMAILS = [
+  'dane.k@koblesystems.com',
+  'kelsey@koblesystems.com',
+  'george@koblesystems.com',
+  'claire@koblesystems.com',
+];
+
+app.http('roles', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  handler: async (request, context) => {
+    try {
+      const body = await request.json();
+      const email = (body.userDetails || '').toLowerCase().trim();
+      const roles = ADMIN_EMAILS.includes(email) ? ['admin'] : [];
+      return { status: 200, jsonBody: { roles } };
+    } catch (err) {
+      context.error('roles handler error:', err);
+      return { status: 200, jsonBody: { roles: [] } };
+    }
+  },
+});
+
 app.http('employees', {
   methods: ['GET', 'PUT'],
   authLevel: 'anonymous',
-  route: 'employees',
   handler: async (request, context) => {
     try {
       const container = await getContainer();
-
       if (request.method === 'GET') {
         try {
           const { resource } = await container.item('employees', 'employees').read();
@@ -55,7 +70,6 @@ app.http('employees', {
           throw err;
         }
       }
-
       if (request.method === 'PUT') {
         const user = getUser(request);
         if (!isAdmin(user)) {
@@ -71,7 +85,6 @@ app.http('employees', {
         });
         return { status: 200, jsonBody: { ok: true, count: body.length } };
       }
-
       return { status: 405, jsonBody: { error: 'Method not allowed' } };
     } catch (err) {
       context.error('employees handler error:', err);
@@ -80,16 +93,12 @@ app.http('employees', {
   },
 });
 
-// GET /api/teams → public read
-// PUT /api/teams → admin only
 app.http('teams', {
   methods: ['GET', 'PUT'],
   authLevel: 'anonymous',
-  route: 'teams',
   handler: async (request, context) => {
     try {
       const container = await getContainer();
-
       if (request.method === 'GET') {
         try {
           const { resource } = await container.item('teams', 'teams').read();
@@ -99,7 +108,6 @@ app.http('teams', {
           throw err;
         }
       }
-
       if (request.method === 'PUT') {
         const user = getUser(request);
         if (!isAdmin(user)) {
@@ -115,7 +123,6 @@ app.http('teams', {
         });
         return { status: 200, jsonBody: { ok: true, count: Object.keys(body).length } };
       }
-
       return { status: 405, jsonBody: { error: 'Method not allowed' } };
     } catch (err) {
       context.error('teams handler error:', err);
