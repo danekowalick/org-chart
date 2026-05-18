@@ -1,7 +1,5 @@
 const { app } = require('@azure/functions');
 const { CosmosClient } = require('@azure/cosmos');
-const { app } = require('@azure/functions');
-const { CosmosClient } = require('@azure/cosmos');
 require('./roles');
 
 let _container = null;
