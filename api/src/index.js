@@ -19,8 +19,24 @@ async function getContainer() {
   return _container;
 }
 
-// GET /api/employees → returns saved array (or [])
-// PUT /api/employees → replaces the saved array
+// Decode the SWA-provided user principal header. Returns null if missing.
+function getUser(request) {
+  const header = request.headers.get('x-ms-client-principal');
+  if (!header) return null;
+  try {
+    const decoded = Buffer.from(header, 'base64').toString('utf-8');
+    return JSON.parse(decoded);
+  } catch (e) {
+    return null;
+  }
+}
+
+function isAdmin(user) {
+  return user && Array.isArray(user.userRoles) && user.userRoles.includes('admin');
+}
+
+// GET /api/employees → public read
+// PUT /api/employees → admin only (also enforced in staticwebapp.config.json)
 app.http('employees', {
   methods: ['GET', 'PUT'],
   authLevel: 'anonymous',
@@ -32,8 +48,7 @@ app.http('employees', {
       if (request.method === 'GET') {
         try {
           const { resource } = await container.item('employees', 'employees').read();
-          const data = (resource && resource.data) || [];
-          return { status: 200, jsonBody: data };
+          return { status: 200, jsonBody: (resource && resource.data) || [] };
         } catch (err) {
           if (err.code === 404) return { status: 200, jsonBody: [] };
           throw err;
@@ -41,12 +56,17 @@ app.http('employees', {
       }
 
       if (request.method === 'PUT') {
+        const user = getUser(request);
+        if (!isAdmin(user)) {
+          return { status: 403, jsonBody: { error: 'Admin role required' } };
+        }
         const body = await request.json();
         if (!Array.isArray(body)) {
           return { status: 400, jsonBody: { error: 'Body must be a JSON array' } };
         }
         await container.items.upsert({
           id: 'employees', data: body, updatedAt: new Date().toISOString(),
+          updatedBy: user.userDetails,
         });
         return { status: 200, jsonBody: { ok: true, count: body.length } };
       }
@@ -54,16 +74,13 @@ app.http('employees', {
       return { status: 405, jsonBody: { error: 'Method not allowed' } };
     } catch (err) {
       context.error('employees handler error:', err);
-      return {
-        status: 500,
-        jsonBody: { error: 'Internal error', message: err.message, code: err.code },
-      };
+      return { status: 500, jsonBody: { error: 'Internal error', message: err.message } };
     }
   },
 });
 
-// GET /api/teams → returns the team palette object (or {})
-// PUT /api/teams → replaces the team palette
+// GET /api/teams → public read
+// PUT /api/teams → admin only
 app.http('teams', {
   methods: ['GET', 'PUT'],
   authLevel: 'anonymous',
@@ -75,8 +92,7 @@ app.http('teams', {
       if (request.method === 'GET') {
         try {
           const { resource } = await container.item('teams', 'teams').read();
-          const data = (resource && resource.data) || {};
-          return { status: 200, jsonBody: data };
+          return { status: 200, jsonBody: (resource && resource.data) || {} };
         } catch (err) {
           if (err.code === 404) return { status: 200, jsonBody: {} };
           throw err;
@@ -84,12 +100,17 @@ app.http('teams', {
       }
 
       if (request.method === 'PUT') {
+        const user = getUser(request);
+        if (!isAdmin(user)) {
+          return { status: 403, jsonBody: { error: 'Admin role required' } };
+        }
         const body = await request.json();
         if (!body || typeof body !== 'object' || Array.isArray(body)) {
           return { status: 400, jsonBody: { error: 'Body must be a JSON object' } };
         }
         await container.items.upsert({
           id: 'teams', data: body, updatedAt: new Date().toISOString(),
+          updatedBy: user.userDetails,
         });
         return { status: 200, jsonBody: { ok: true, count: Object.keys(body).length } };
       }
@@ -97,10 +118,7 @@ app.http('teams', {
       return { status: 405, jsonBody: { error: 'Method not allowed' } };
     } catch (err) {
       context.error('teams handler error:', err);
-      return {
-        status: 500,
-        jsonBody: { error: 'Internal error', message: err.message, code: err.code },
-      };
+      return { status: 500, jsonBody: { error: 'Internal error', message: err.message } };
     }
   },
 });
