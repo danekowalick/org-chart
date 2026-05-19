@@ -40,10 +40,13 @@ const ADMIN_EMAILS = [
 ];
 
 app.http('roles', {
-  methods: ['POST'],
+  methods: ['GET', 'POST'],
   authLevel: 'anonymous',
   route: 'roles',
   handler: async (request, context) => {
+    if (request.method === 'GET') {
+      return { status: 200, jsonBody: { hello: 'roles endpoint is alive' } };
+    }
     try {
       const body = await request.json();
       const email = (body.userDetails || '').toLowerCase().trim();
