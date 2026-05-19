@@ -74,8 +74,10 @@ app.http('employees', {
       if (request.method === 'PUT') {
         const user = getUser(request);
         // TEMP: Hardcoded admin email check while we debug roles
-if (!user || user.userDetails !== 'dane.k@koblesystems.com') {
-  return { status: 403, jsonBody: { error: 'Not authorized' } };
+const adminEmails = ['dane.k@koblesystems.com', 'kelsey@koblesystems.com', 'george@koblesystems.com', 'claire@koblesystems.com'];
+const email = user && user.userDetails && user.userDetails.toLowerCase();
+if (!email || !adminEmails.includes(email)) {
+  return { status: 403, jsonBody: { error: 'Admin email required' } };
 }
         const body = await request.json();
         if (!Array.isArray(body)) {
@@ -112,8 +114,10 @@ app.http('teams', {
       if (request.method === 'PUT') {
         const user = getUser(request);
         // TEMP: Hardcoded admin email check while we debug roles
-if (!user || user.userDetails !== 'dane.k@koblesystems.com') {
-  return { status: 403, jsonBody: { error: 'Not authorized' } };
+const adminEmails = ['dane.k@koblesystems.com', 'kelsey@koblesystems.com', 'george@koblesystems.com', 'claire@koblesystems.com'];
+const email = user && user.userDetails && user.userDetails.toLowerCase();
+if (!email || !adminEmails.includes(email)) {
+  return { status: 403, jsonBody: { error: 'Admin email required' } };
 }
         const body = await request.json();
         if (!body || typeof body !== 'object' || Array.isArray(body)) {
