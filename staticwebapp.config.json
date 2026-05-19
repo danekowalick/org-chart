@@ -14,6 +14,10 @@
   },
   "routes": [
     {
+      "route": "/api/roles",
+      "allowedRoles": ["anonymous", "authenticated"]
+    },
+    {
       "route": "/login",
       "redirect": "/.auth/login/aad"
     },
