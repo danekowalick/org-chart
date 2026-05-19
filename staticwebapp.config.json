@@ -22,16 +22,6 @@
       "redirect": "/.auth/logout"
     },
     {
-      "route": "/api/employees",
-      "methods": ["PUT"],
-      "allowedRoles": ["admin"]
-    },
-    {
-      "route": "/api/teams",
-      "methods": ["PUT"],
-      "allowedRoles": ["admin"]
-    },
-    {
       "route": "/*",
       "allowedRoles": ["authenticated"]
     }
