@@ -41,7 +41,6 @@ const ADMIN_EMAILS = [
 
 app.http('roles', {
   methods: ['GET', 'POST'],
-  route: 'roles',
   handler: async (request, context) => {
     if (request.method === 'GET') {
       return { status: 200, jsonBody: { hello: 'roles endpoint is alive' } };
@@ -60,7 +59,6 @@ app.http('roles', {
 
 app.http('employees', {
   methods: ['GET', 'PUT'],
-  authLevel: 'anonymous',
   handler: async (request, context) => {
     try {
       const container = await getContainer();
@@ -98,7 +96,6 @@ app.http('employees', {
 
 app.http('teams', {
   methods: ['GET', 'PUT'],
-  authLevel: 'anonymous',
   handler: async (request, context) => {
     try {
       const container = await getContainer();
