@@ -12,11 +12,7 @@
       }
     }
   },
-  "routes": [
-    {
-      "route": "/api/roles",
-      "allowedRoles": ["anonymous", "authenticated"]
-    },
+ "routes": [
     {
       "route": "/login",
       "redirect": "/.auth/login/aad"
