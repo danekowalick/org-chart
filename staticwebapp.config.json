@@ -1,7 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/staticwebapp.config.json",
   "auth": {
-    "rolesSource": "/api/roles",
     "identityProviders": {
       "azureActiveDirectory": {
         "registration": {
@@ -12,7 +11,7 @@
       }
     }
   },
- "routes": [
+  "routes": [
     {
       "route": "/login",
       "redirect": "/.auth/login/aad"
