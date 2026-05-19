@@ -213,6 +213,14 @@ export default function OrgChartApp() {
   const [displayMode, setDisplayMode] = useState(false);
   const appRootRef = useRef(null);
 
+  // Prevent stale seed data from flashing before API loads
+if (!storageLoaded) {
+  return (
+    <div style={{ padding: "20px", fontSize: "18px" }}>
+      Loading org chart…
+    </div>
+  );
+}
   // Toggle browser fullscreen and the in-app chrome-hiding mode together.
   // Fullscreen API is best-effort: if it's blocked, we still hide chrome.
   const enterDisplayMode = async () => {
