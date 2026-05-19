@@ -41,7 +41,6 @@ const ADMIN_EMAILS = [
 
 app.http('roles', {
   methods: ['GET', 'POST'],
-  authLevel: 'anonymous',
   route: 'roles',
   handler: async (request, context) => {
     if (request.method === 'GET') {
