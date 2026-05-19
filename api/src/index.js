@@ -73,9 +73,10 @@ app.http('employees', {
       }
       if (request.method === 'PUT') {
         const user = getUser(request);
-        if (!isAdmin(user)) {
-          return { status: 403, jsonBody: { error: 'Admin role required' } };
-        }
+        // TEMP: Hardcoded admin email check while we debug roles
+if (!user || user.userDetails !== 'dane.k@koblesystems.com') {
+  return { status: 403, jsonBody: { error: 'Not authorized' } };
+}
         const body = await request.json();
         if (!Array.isArray(body)) {
           return { status: 400, jsonBody: { error: 'Body must be a JSON array' } };
@@ -110,9 +111,10 @@ app.http('teams', {
       }
       if (request.method === 'PUT') {
         const user = getUser(request);
-        if (!isAdmin(user)) {
-          return { status: 403, jsonBody: { error: 'Admin role required' } };
-        }
+        // TEMP: Hardcoded admin email check while we debug roles
+if (!user || user.userDetails !== 'dane.k@koblesystems.com') {
+  return { status: 403, jsonBody: { error: 'Not authorized' } };
+}
         const body = await request.json();
         if (!body || typeof body !== 'object' || Array.isArray(body)) {
           return { status: 400, jsonBody: { error: 'Body must be a JSON object' } };
