@@ -28,10 +28,9 @@ function getUser(request) {
   } catch (e) { return null; }
 }
 
-function isAdmin(user) {
-  return user && Array.isArray(user.userRoles) && user.userRoles.includes('admin');
-}
-
+// === Admin allowlist ===
+// Edit this list to add or remove people with edit access.
+// Everyone else in the tenant can still view the chart, just not modify it.
 const ADMIN_EMAILS = [
   'dane.k@koblesystems.com',
   'kelsey@koblesystems.com',
@@ -39,23 +38,10 @@ const ADMIN_EMAILS = [
   'claire@koblesystems.com',
 ];
 
-app.http('roles', {
-  methods: ['GET', 'POST'],
-  handler: async (request, context) => {
-    if (request.method === 'GET') {
-      return { status: 200, jsonBody: { hello: 'roles endpoint is alive' } };
-    }
-    try {
-      const body = await request.json();
-      const email = (body.userDetails || '').toLowerCase().trim();
-      const roles = ADMIN_EMAILS.includes(email) ? ['admin'] : [];
-      return { status: 200, jsonBody: { roles } };
-    } catch (err) {
-      context.error('roles handler error:', err);
-      return { status: 200, jsonBody: { roles: [] } };
-    }
-  },
-});
+function isAdmin(user) {
+  const email = user && user.userDetails && user.userDetails.toLowerCase();
+  return !!email && ADMIN_EMAILS.includes(email);
+}
 
 app.http('employees', {
   methods: ['GET', 'PUT'],
@@ -73,12 +59,9 @@ app.http('employees', {
       }
       if (request.method === 'PUT') {
         const user = getUser(request);
-        // TEMP: Hardcoded admin email check while we debug roles
-const adminEmails = ['dane.k@koblesystems.com', 'kelsey@koblesystems.com', 'george@koblesystems.com', 'claire@koblesystems.com'];
-const email = user && user.userDetails && user.userDetails.toLowerCase();
-if (!email || !adminEmails.includes(email)) {
-  return { status: 403, jsonBody: { error: 'Admin email required' } };
-}
+        if (!isAdmin(user)) {
+          return { status: 403, jsonBody: { error: 'Admin email required' } };
+        }
         const body = await request.json();
         if (!Array.isArray(body)) {
           return { status: 400, jsonBody: { error: 'Body must be a JSON array' } };
@@ -113,12 +96,9 @@ app.http('teams', {
       }
       if (request.method === 'PUT') {
         const user = getUser(request);
-        // TEMP: Hardcoded admin email check while we debug roles
-const adminEmails = ['dane.k@koblesystems.com', 'kelsey@koblesystems.com', 'george@koblesystems.com', 'claire@koblesystems.com'];
-const email = user && user.userDetails && user.userDetails.toLowerCase();
-if (!email || !adminEmails.includes(email)) {
-  return { status: 403, jsonBody: { error: 'Admin email required' } };
-}
+        if (!isAdmin(user)) {
+          return { status: 403, jsonBody: { error: 'Admin email required' } };
+        }
         const body = await request.json();
         if (!body || typeof body !== 'object' || Array.isArray(body)) {
           return { status: 400, jsonBody: { error: 'Body must be a JSON object' } };
